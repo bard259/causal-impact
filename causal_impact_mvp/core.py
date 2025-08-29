@@ -1,128 +1,182 @@
-from __future__ import annotations
-import os, warnings
-from dataclasses import dataclass
-from typing import Optional, Sequence, Dict, Any, Tuple
-
-import numpy as np
+from causalimpact import CausalImpact
 import pandas as pd
 
+def prepare_data_for_causal_impact(y, X):
+  """
+  Prepares treated and synthetic control data for causal impact analysis,
+  ensuring they are in the correct format and aligned by time.
 
-@dataclass
-class ImpactResult:
-    """Result container for causal impact analysis."""
-    summary: pd.DataFrame
-    series: pd.DataFrame
-    model_info: Dict[str, Any]
+  Args:
+    y: pandas Series representing the treated data.
+    X: pandas DataFrame representing the synthetic control data.
 
-    def __repr__(self) -> str:
-        return f"ImpactResult\n\n{self.summary.to_string(index=False)}"
+  Returns:
+    A tuple containing the treated data as a DataFrame and the synthetic
+    control data as a DataFrame, aligned by index.
+  """
+  # Convert the treated Series to a DataFrame
+  y_df = y.to_frame()
 
+  # Ensure both DataFrames have the same index and are aligned
+  # This assumes that both y and X have a compatible index representing time.
+  # If the indices are not the same, you might need to perform a join or merge.
+  # For this function, we assume they are meant to be aligned and check for consistency.
+  if not y_df.index.equals(X.index):
+      # In a real scenario, you might handle this misalignment (e.g., merge, resample)
+      # For this example, we'll raise an error to indicate the issue.
+      raise ValueError("Indices of treated data (y) and synthetic control data (X) do not match.")
 
-# -----------------------
-# Helpers
-# -----------------------
-def _ensure_datetime_index(df: pd.DataFrame, date_col: Optional[str]) -> pd.DataFrame:
-    if date_col and date_col in df.columns:
-        df = df.copy()
-        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-        df = df.set_index(date_col)
-    if not isinstance(df.index, pd.DatetimeIndex):
-        raise ValueError("DataFrame must be indexed by datetime")
-    return df.sort_index()
+  return y_df, X
+    
+def run_causal_impact_analysis(y, X, treatment_time):
+  """
+  Runs a causal impact analysis using treated data, synthetic control data,
+  and a treatment time point, then returns a summary and visualizes the impact.
 
+  Args:
+    y: pandas Series representing the treated data.
+    X: pandas DataFrame representing the synthetic control data.
+    treatment_time: The time point when the intervention or treatment occurs.
 
-def _ols_fit(y: pd.Series, X: pd.DataFrame):
-    X_ = np.c_[np.ones(len(X)), X.values]
-    beta = np.linalg.pinv(X_.T @ X_) @ (X_.T @ y.values)
-    return beta
-
-
-# -----------------------
-# Public API
-# -----------------------
-def dataloader(
-    data_path: str,
-    *,
-    date_col: Optional[str] = None,
-    y_col: Optional[str] = None,
-    control_cols: Optional[Sequence[str]] = None,
-) -> pd.DataFrame:
-    """Load CSV/Parquet and return time-indexed DataFrame."""
-    df = pd.read_csv(data_path) if data_path.endswith(".csv") else pd.read_parquet(data_path)
-    df = _ensure_datetime_index(df, date_col)
-
-    if control_cols:
-        keep = [c for c in control_cols if c in df.columns]
-        if y_col and y_col not in keep:
-            keep = [y_col] + keep
-        df = df[keep]
-    if y_col and y_col in df.columns:
-        cols = [y_col] + [c for c in df.columns if c != y_col]
-        df = df[cols]
-    return df
+  Returns:
+    A string containing the summary of the causal impact analysis.
+  """
+    # Prepare the data
+  try:
+    y_prepared, X_prepared = prepare_data_for_causal_impact(y, X)
+  except ValueError as e:
+    print(f"Error preparing data: {e}")
+    return None
 
 
-def syn_generate(control_df: pd.DataFrame, n_components: int = 3) -> pd.DataFrame:
-    """Simple PCA via SVD to reduce controls."""
-    Z = (control_df - control_df.mean()) / (control_df.std(ddof=1) + 1e-12)
-    U, S, Vt = np.linalg.svd(Z, full_matrices=False)
-    k = min(n_components, Vt.shape[0])
-    comps = Z @ Vt[:k].T
-    cols = [f"PC{i+1}" for i in range(k)]
-    return pd.DataFrame(comps, index=control_df.index, columns=cols)
+  # Define pre- and post-treatment periods
+  # Assuming a 0-based index for time points
+  pre_treatment_period = (0, treatment_time - 1)
+  post_treatment_period = (treatment_time, len(y) - 1)
 
 
-def assumption_val(control_df: pd.DataFrame, y: pd.Series, timepoint=None) -> pd.DataFrame:
-    """Basic diagnostics: missingness, correlation, collinearity."""
-    df = control_df.join(y.rename("y"))
-    rows = [{"check": "missing_rate_y", "value": df["y"].isna().mean()}]
-    for c in control_df.columns:
-        rows.append({"check": f"missing_rate_{c}", "value": df[c].isna().mean()})
-    if timepoint:
-        pre = df[df.index <= pd.to_datetime(timepoint)]
-        corr = pre.drop("y", axis=1).corrwith(pre["y"])
-    else:
-        corr = df.drop("y", axis=1).corrwith(df["y"])
-    for c, v in corr.items():
-        rows.append({"check": f"corr_y_{c}", "value": v})
-    return pd.DataFrame(rows)
+  # Concatenate the treated and synthetic control data
+  data_for_impact = pd.concat([y_prepared, X_prepared], axis=1)
+
+  # Instantiate and run the CausalImpact model
+  try:
+    impact = CausalImpact(data_for_impact, list(pre_treatment_period), list(post_treatment_period))
+
+    # Summarize the results
+    summary = impact.summary()
+    print(summary)
+
+    # Plot the results
+    impact.plot()
+
+    return summary
+
+  except Exception as e:
+    print(f"Error during causal impact analysis: {e}")
+    return None
+def run_causal_impact_analysis(y, X, treatment_time):
+  """
+  Runs a causal impact analysis using treated data, synthetic control data,
+  and a treatment time point, then returns a summary and visualizes the impact.
+
+  Args:
+    y: pandas Series representing the treated data.
+    X: pandas DataFrame representing the synthetic control data.
+    treatment_time: The time point when the intervention or treatment occurs.
+
+  Returns:
+    A string containing the summary of the causal impact analysis.
+  """
+  # Prepare the data
+  try:
+    y_prepared, X_prepared = prepare_data_for_causal_impact(y, X)
+  except ValueError as e:
+    print(f"Error preparing data: {e}")
+    return None
+
+  # Define pre- and post-treatment periods
+  # Assuming a 0-based index for time points
+  pre_treatment_period = (0, treatment_time - 1)
+  post_treatment_period = (treatment_time, len(y) - 1)
 
 
-def causal_impact(y: pd.Series, X: pd.DataFrame, timepoint) -> ImpactResult:
-    """Estimate impact using pycausalimpact if available, else fallback OLS."""
-    try:
-        from causalimpact import CausalImpact
-        df = pd.concat([y, X], axis=1)
-        pre = [df.index.min(), pd.to_datetime(timepoint)]
-        post = [pd.to_datetime(timepoint) + pd.Timedelta(1, "s"), df.index.max()]
-        ci = CausalImpact(df, pre, post)
-        summary = pd.DataFrame({
-            "average_effect": [ci.summary_data.loc["post", "average"]],
-            "p_value": [ci.p_value],
-        })
-        return ImpactResult(summary, ci.inferences, {"backend": "pycausalimpact"})
-    except Exception:
-        warnings.warn("Falling back to OLS.")
-        cutoff = pd.to_datetime(timepoint)
-        beta = _ols_fit(y[y.index <= cutoff], X[X.index <= cutoff])
-        yhat = np.c_[np.ones(len(X)), X.values] @ beta
-        eff = y.values - yhat
-        series = pd.DataFrame({"y": y, "yhat": yhat, "point_effect": eff}, index=y.index)
-        summary = pd.DataFrame({"average_effect": [series.loc[y.index > cutoff, "point_effect"].mean()]})
-        return ImpactResult(summary, series, {"backend": "ols"})
+  # Concatenate the treated and synthetic control data
+  data_for_impact = pd.concat([y_prepared, X_prepared], axis=1)
 
+  # Instantiate and run the CausalImpact model
+  try:
+    impact = CausalImpact(data_for_impact, list(pre_treatment_period), list(post_treatment_period))
 
-def casual_impact(y: pd.Series, X: pd.DataFrame, timepoint):
-    return causal_impact(y, X, timepoint)
+    # Summarize the results
+    summary = impact.summary()
+    print(summary)
 
+    # Plot the results
+    impact.plot()
 
-def run_demo(n: int = 200, k: int = 5, seed: int = 42, treatment_shift: float = 1.0):
-    """Generate synthetic data and run full pipeline."""
-    rng = np.random.default_rng(seed)
-    idx = pd.date_range("2024-01-01", periods=n, freq="D")
-    X = pd.DataFrame(rng.normal(size=(n, k)), index=idx, columns=[f"x{i}" for i in range(k)])
-    y = 0.5 * X["x0"] - 0.3 * X["x1"] + rng.normal(size=n)
-    tp = idx[n // 2]
-    y[idx > tp] += treatment_shift
-    summary, series, model = causal_impact(y, syn_generate(X), tp).summary, causal_impact(y, syn_generate(X), tp).series, causal_impact(y, syn_generate(X), tp).model_info
-    return summary, series, model
+    return summary
+
+  except Exception as e:
+    print(f"Error during causal impact analysis: {e}")
+    return None
+      
+def generate_causal_data(n_points=100, treatment_time=70, causal_effect=5, n_covariates=3):
+  """
+  Generates synthetic time series data for causal impact analysis and synthetic control.
+
+  Args:
+    n_points: Total number of data points in the time series.
+    treatment_time: The time point when the intervention or treatment occurs.
+    causal_effect: The magnitude of the causal effect introduced after the treatment time.
+    n_covariates: The number of additional covariates to generate for synthetic control.
+
+  Returns:
+    A pandas DataFrame with the time series data ('y') and additional covariates.
+  """
+  time = np.arange(n_points)
+  # Generate a base trend
+  base_trend = 0.5 * time + 10
+
+  # Introduce some seasonality
+  seasonality = 5 * np.sin(time / 10)
+
+  # Add some noise
+  noise = np.random.normal(0, 2, n_points)
+
+  # Combine components to create the base time series
+  y = base_trend + seasonality + noise
+
+  # Introduce causal effect after treatment time
+  y[treatment_time:] += causal_effect
+
+  data = pd.DataFrame({'y': y})
+
+  # Generate additional covariates for synthetic control
+  for i in range(n_covariates):
+      covariate_noise = np.random.normal(0, 1.5, n_points)
+      # Create covariates that are correlated with the base trend and seasonality
+      data[f'x{i+1}'] = base_trend * (1 + np.random.rand() * 0.1) + seasonality * (1 + np.random.rand() * 0.1) + covariate_noise
+
+  return data
+
+def run_demo(n_points=150, treatment_time=100, causal_effect=10, n_covariates=3):
+  """
+  Generates synthetic causal data and runs a causal impact analysis demo.
+
+  Args:
+    n_points: Total number of data points in the time series.
+    treatment_time: The time point when the intervention or treatment occurs.
+    causal_effect: The magnitude of the causal effect introduced after the treatment time.
+    n_covariates: The number of additional covariates to generate for synthetic control.
+  """
+  print("Generating synthetic causal data...")
+  demo_data = generate_causal_data(n_points=n_points, treatment_time=treatment_time, causal_effect=causal_effect, n_covariates=n_covariates)
+  display(demo_data.head())
+
+  print("\nRunning causal impact analysis...")
+  # Assuming 'y' is the treated column and other columns are covariates
+  treated_series = demo_data['y']
+  covariate_columns = [col for col in demo_data.columns if col.startswith('x')]
+  synthetic_control_df = demo_data[covariate_columns]
+
+  run_causal_impact_analysis(treated_series, synthetic_control_df, treatment_time)
