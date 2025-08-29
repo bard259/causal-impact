@@ -11,10 +11,21 @@ setup(
     install_requires=[
         "numpy", "pandas", "causalimpact"                    # Add dependencies here
     ],
+    packages=find_packages(exclude=("tests", "docs", "examples")),
+    include_package_data=True,
+    python_requires=">=3.9",
+    install_requires=[
+        "numpy>=1.23",
+        "pandas>=1.5",
+    ],
+    extras_require={
+        # If you prefer WillianFuks' repo in Colab, install that separately.
+        # Here we use the PyPI name when available.
+        "impact": ["pycausalimpact>=0.2.7"],
+    },
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
-    ],
-    python_requires='>=3.6',
+    ],,
 )
