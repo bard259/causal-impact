@@ -1,5 +1,6 @@
 from causalimpact import CausalImpact
 import pandas as pd
+import numpy as np
 
 def prepare_data_for_causal_impact(y, X):
   """
