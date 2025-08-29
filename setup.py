@@ -1,4 +1,13 @@
+from pathlib import Path
 from setuptools import setup, find_packages
+
+readme_path = Path(__file__).with_name("README.md")
+try:
+    README = readme_path.read_text(encoding="utf-8")
+    long_desc_type = "text/markdown"
+except Exception:
+    README = ""
+    long_desc_type = "text/plain"
 
 setup(
     name="causal-impact",                  # Package name
