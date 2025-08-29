@@ -18,7 +18,7 @@ setup(
     url="https://github.com/bard259/causal-impact",  # GitHub URL
     packages=find_packages(),                        # Automatically find package folders
     install_requires=[
-        "numpy", "pandas", "causalimpact"                    # Add dependencies here
+        "numpy", "pandas"                    # Add dependencies here
     ],
     packages=find_packages(exclude=("tests", "docs", "examples")),
     include_package_data=True,
