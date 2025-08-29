@@ -300,3 +300,121 @@ def causal_impact(y: pd.Series, X: pd.DataFrame, timepoint) -> ImpactResult:
     cum_upper = cumulative + z * cum_se
 
     series["cumulative_effect"] = cum_]()
+# --- put this inside causal_impact_mvp.py ---
+
+def run_demo(
+    *,
+    # data generation (defaults to ON)
+    generate_data: bool = True,
+    n: int = 220,
+    k: int = 5,
+    seed: int = 42,
+    treatment_shift: float = 1.0,
+
+    # if not generating data, you can provide your own CSV
+    data_path: str | None = None,
+    date_col: str = "date",
+    y_col: str = "kpi",
+    control_cols: list[str] | None = None,
+
+    # pipeline knobs
+    n_components: int = 3,
+
+    # output
+    out_dir: str = "./_demo_data",
+    csv_name: str = "toy_metric.csv",
+    save_outputs: bool = True,
+):
+    """
+    Demo runner for the causal-impact MVP.
+
+    Default behavior (generate_data=True):
+      - synthesizes a dataset internally (no external files required)
+      - writes a CSV to out_dir for transparency/debugging
+      - runs PCA synthetic controls, diagnostics, and causal impact
+
+    If generate_data=False:
+      - expects data_path to a CSV with `date_col`, `y_col`, and control columns
+
+    Returns
+    -------
+    (summary_df, series_df, model_info)
+    """
+    import os
+    import numpy as np
+    import pandas as pd
+
+    os.makedirs(out_dir, exist_ok=True)
+
+    if generate_data:
+        # --- build synthetic dataset ---
+        rng = np.random.default_rng(seed)
+        idx = pd.date_range("2024-01-01", periods=n, freq="D")
+        X_raw = pd.DataFrame(rng.normal(size=(n, k)), index=idx, columns=[f"x{i+1}" for i in range(k)])
+
+        # outcome is a linear combo of a few controls + noise
+        signal = 0.6 * X_raw["x1"] - 0.35 * X_raw["x2"] + 0.15 * X_raw["x3"]
+        y = signal + rng.normal(scale=0.6, size=n)
+
+        # intervention
+        timepoint = idx[n // 2]
+        y[idx > timepoint] = y[idx > timepoint] + treatment_shift
+
+        df = pd.concat([y.rename(y_col), X_raw], axis=1)
+        df.insert(0, date_col, df.index)
+
+        # save the generated CSV (nice for debugging; optional)
+        csv_path = os.path.join(out_dir, csv_name)
+        df.to_csv(csv_path, index=False)
+    else:
+        if not data_path:
+            raise ValueError("When generate_data=False, you must provide data_path to a CSV.")
+        csv_path = data_path
+        # You must also set timepoint yourself when using external data
+        raise_notif = (
+            "You called run_demo(generate_data=False) but did not set 'timepoint'. "
+            "For external data, please adapt this function to accept your timepoint "
+            "or compute it from your metadata."
+        )
+        # In this minimal MVP, we don’t guess timepoint for external data to avoid errors.
+        # You can modify below to pass your timepoint.
+        # For now, we just pick the midpoint of the data for demonstration.
+        df_tmp = dataloader(csv_path, date_col=date_col, y_col=y_col)
+        time_idx = df_tmp.index
+        if len(time_idx) < 2:
+            raise ValueError("Not enough rows to infer a midpoint timepoint.")
+        timepoint = time_idx[len(time_idx) // 2]
+        df = df_tmp.reset_index().rename(columns={df_tmp.index.name or date_col: date_col})
+
+    # Now proceed through the pipeline the same way for both branches
+    loaded = dataloader(
+        csv_path,
+        date_col=date_col,
+        y_col=y_col,
+        control_cols=([y_col] + [c for c in df.columns if c not in (date_col, y_col)])
+        if control_cols is None else control_cols,
+    )
+
+    y_series = loaded[y_col]
+    controls = loaded.drop(columns=[y_col])
+
+    X = syn_generate(controls, n_components=n_components)
+    diag = assumption_val(X, y_series, timepoint=timepoint)
+    res = causal_impact(y_series, X, timepoint=timepoint)
+
+    if save_outputs:
+        res.series.to_csv(os.path.join(out_dir, "impact_series.csv"))
+        res.summary.to_csv(os.path.join(out_dir, "impact_summary.csv"), index=False)
+        diag.to_csv(os.path.join(out_dir, "assumption_diag.csv"), index=False)
+
+    return res.summary, res.series, res.model_info
+
+
+# keep your CLI runner; it now uses the “generate test data” default
+if __name__ == "__main__":
+    summary, series, model = run_demo()  # generate_data=True by default
+    print("=== IMPACT SUMMARY ===")
+    print(summary.to_string(index=False))
+    print("\nFirst 10 post-period rows:")
+    print(series.head(10).to_string())
+    print("\nBackend:", model.get("backend"))
