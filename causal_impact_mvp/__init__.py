@@ -3,7 +3,6 @@ from .core import (
     syn_generate,
     assumption_val,
     causal_impact,
-    casual_impact,
     run_demo,
 )
 
@@ -12,6 +11,5 @@ __all__ = [
     "syn_generate",
     "assumption_val",
     "causal_impact",
-    "casual_impact",
     "run_demo",
 ]
